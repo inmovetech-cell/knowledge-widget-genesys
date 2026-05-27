@@ -574,21 +574,40 @@
 
   /* ── Extract article body text ────────────────────────── */
   function extractBody(doc) {
-    // rawBody: Genesys stores the "content overview" as plain text here
-    const raw = doc.variations?.[0]?.rawBody;
-    if (raw?.trim()) return raw.trim();
+    // Genesys puede devolver variations en el nivel raíz o bajo doc.document
+    const variations = doc.variations || doc.document?.variations || [];
+    const v0 = variations[0];
 
-    // Structured blocks: paragraphs and lists
-    const blocks = doc.variations?.[0]?.body?.blocks || [];
-    const fromBlocks = blocks.flatMap(b => {
-      if (b.paragraph) return [b.paragraph.texts?.map(t => t.text || '').join('') || ''];
-      if (b.list) return (b.list.blocks || []).map(lb =>
-        '• ' + (lb.paragraph?.texts?.map(t => t.text || '').join('') || '')
-      );
-      return [];
-    }).filter(Boolean).join('\n');
-    if (fromBlocks.trim()) return fromBlocks;
+    if (v0) {
+      // body puede ser string directo (texto plano) o objeto con bloques
+      const bodyField = v0.rawBody || v0.body;
+      if (typeof bodyField === 'string' && bodyField.trim()) return bodyField.trim();
 
+      const bodyObj = (typeof bodyField === 'object' && bodyField !== null) ? bodyField : null;
+      const blocks  = bodyObj?.blocks || [];
+
+      const fromBlocks = blocks.flatMap(b => {
+        if (b.paragraph) {
+          const txt = b.paragraph.texts?.map(t => t.text || '').join('') || '';
+          return txt ? [txt] : [];
+        }
+        // Listas: unordered / ordered / genérica
+        const list = b.list || b.unorderedList || b.orderedList;
+        if (list) {
+          const items = list.blocks || list.items || [];
+          return items.map(li =>
+            '• ' + (li.paragraph?.texts?.map(t => t.text || '').join('') || li.text || '')
+          ).filter(Boolean);
+        }
+        // Texto suelto a nivel de bloque
+        if (typeof b.text === 'string' && b.text.trim()) return [b.text.trim()];
+        return [];
+      }).filter(Boolean).join('\n');
+
+      if (fromBlocks.trim()) return fromBlocks;
+    }
+
+    // Fallback: campos planos
     return doc.description || doc.overview || doc.summary || doc.text || doc.body || '';
   }
 
@@ -670,6 +689,15 @@
             const fullDoc = await apiFetch(
               `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}`
             );
+            // Log para diagnóstico — abre DevTools > Consola para ver la estructura real
+            console.debug('[KB Widget] fullDoc structure:', JSON.stringify({
+              keys: Object.keys(fullDoc),
+              hasVariations: !!fullDoc.variations,
+              hasDocument: !!fullDoc.document,
+              v0keys: (fullDoc.variations?.[0] || fullDoc.document?.variations?.[0])
+                ? Object.keys(fullDoc.variations?.[0] || fullDoc.document.variations[0])
+                : 'none',
+            }));
             const fullBody = extractBody(fullDoc);
             contentLoaded = true;
             contentArea.innerHTML = fullBody
@@ -739,7 +767,7 @@
       const results = await searchKnowledge(query);
       setStatus('');
       renderResults(results, query);
-      if (results.length > 0) $('btn-clear').style.display = '';
+      if (results.length > 0) $('btn-clear').style.display = 'inline-block';
     } catch (e) {
       setStatus(`Error en la búsqueda: ${e.message}`);
     } finally {
