@@ -736,6 +736,8 @@
                 firstTextKeys: para?.texts?.[0] ? Object.keys(para.texts[0]) : null,
                 firstTextValue: para?.texts?.[0]?.text ?? '(empty)',
                 recursiveExtract: extractTextRecursive(v0?.body?.blocks?.[0]),
+                // RAW paragraph JSON — muestra todo el contenido del objeto paragraph
+                paragraphRAW: JSON.stringify(para).substring(0, 600),
               };
               contentArea.innerHTML = `
                 <em>Sin contenido disponible en este artículo.</em>
