@@ -107,6 +107,15 @@
     }
     .search-row button:hover { background: var(--primary-dk); }
     .search-row button:disabled { opacity: .5; cursor: default; }
+    #btn-clear {
+      background: transparent;
+      color: var(--text-sub);
+      border: 1.5px solid var(--border);
+      font-weight: 400;
+      display: none;
+      padding: 7px 10px;
+    }
+    #btn-clear:hover { background: #eef0f3; color: var(--text); }
 
     /* KB selector */
     #kb-select {
@@ -209,7 +218,9 @@
       color: var(--text);
       max-height: 260px;
       overflow-y: auto;
+      white-space: pre-wrap;
     }
+    .card-body a, .card-body em { white-space: normal; }
     .result-card.open .card-body { display: block; }
     .card-body p { margin-bottom: 6px; }
     .card-body a {
@@ -330,6 +341,7 @@
   <div class="search-row">
     <input id="search-input" type="search" placeholder="Buscar artículos… (ej: contraseña, facturación)"
            autocomplete="off" disabled />
+    <button id="btn-clear" title="Limpiar búsqueda">✕ Limpiar</button>
     <button id="btn-search" disabled>Buscar</button>
   </div>
 
@@ -560,6 +572,26 @@
     throw firstError;
   }
 
+  /* ── Extract article body text ────────────────────────── */
+  function extractBody(doc) {
+    // rawBody: Genesys stores the "content overview" as plain text here
+    const raw = doc.variations?.[0]?.rawBody;
+    if (raw?.trim()) return raw.trim();
+
+    // Structured blocks: paragraphs and lists
+    const blocks = doc.variations?.[0]?.body?.blocks || [];
+    const fromBlocks = blocks.flatMap(b => {
+      if (b.paragraph) return [b.paragraph.texts?.map(t => t.text || '').join('') || ''];
+      if (b.list) return (b.list.blocks || []).map(lb =>
+        '• ' + (lb.paragraph?.texts?.map(t => t.text || '').join('') || '')
+      );
+      return [];
+    }).filter(Boolean).join('\n');
+    if (fromBlocks.trim()) return fromBlocks;
+
+    return doc.description || doc.overview || doc.summary || doc.text || doc.body || '';
+  }
+
   /* ── Highlight query terms ───────────────────────────── */
   function highlight(text, query) {
     if (!text || !query) return text || '';
@@ -589,10 +621,7 @@
     articles.forEach((article, idx) => {
       const doc = article.document || article;
       const title = doc.title || doc.name || 'Sin título';
-      const body = doc.variations?.[0]?.body?.blocks
-        ?.map(b => b.paragraph?.texts?.map(t => t.text).join('') || '')
-        .filter(Boolean).join(' ')
-        || doc.text || doc.body || '';
+      const body = extractBody(doc);
       const excerpt = body.length > 200 ? body.substring(0, 200) + '…' : body;
       const category = doc.categories?.map(c => c.name).join(' › ') || '';
       const externalUrl = doc.externalUrl || '';
@@ -622,14 +651,34 @@
           </svg>
         </div>
         <div class="card-body">
-          ${highlight(body, query) || '<em>Sin contenido disponible.</em>'}
-          ${externalUrl ? `<br/><a href="${externalUrl}" target="_blank" rel="noopener">🔗 Ver artículo completo</a>` : ''}
+          <div class="content-area">${body ? highlight(body, query) : '<em style="white-space:normal">Haz clic para cargar el contenido…</em>'}</div>
+          ${externalUrl ? `<a href="${externalUrl}" target="_blank" rel="noopener" style="display:block;margin-top:6px">🔗 Ver artículo completo</a>` : ''}
         </div>`;
 
       const header = card.querySelector('.card-header');
-      const toggle = () => {
+      const contentArea = card.querySelector('.content-area');
+      let contentLoaded = !!body;
+
+      const toggle = async () => {
         const open = card.classList.toggle('open');
         header.setAttribute('aria-expanded', open);
+
+        // Lazy-load full document content on first expand
+        if (open && !contentLoaded && doc.id) {
+          contentArea.innerHTML = '<span class="spinner"></span> Cargando contenido…';
+          try {
+            const fullDoc = await apiFetch(
+              `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}`
+            );
+            const fullBody = extractBody(fullDoc);
+            contentLoaded = true;
+            contentArea.innerHTML = fullBody
+              ? highlight(fullBody, query)
+              : '<em>Sin contenido disponible en este artículo.</em>';
+          } catch (e) {
+            contentArea.innerHTML = `<em style="white-space:normal">Error al cargar: ${e.message}</em>`;
+          }
+        }
       };
       header.addEventListener('click', toggle);
       header.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') toggle(); });
@@ -682,6 +731,7 @@
     if (!selectedKbId) { setStatus('Selecciona una base de conocimiento.'); return; }
 
     $('results').innerHTML = '';
+    $('btn-clear').style.display = 'none';
     setStatus(`Buscando "${query}"…`, true);
     $('btn-search').disabled = true;
 
@@ -689,6 +739,7 @@
       const results = await searchKnowledge(query);
       setStatus('');
       renderResults(results, query);
+      if (results.length > 0) $('btn-clear').style.display = '';
     } catch (e) {
       setStatus(`Error en la búsqueda: ${e.message}`);
     } finally {
@@ -740,6 +791,15 @@
     // Search
     $('btn-search').addEventListener('click', doSearch);
     $('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+    // Clear results
+    $('btn-clear').addEventListener('click', () => {
+      $('search-input').value = '';
+      $('results').innerHTML = '';
+      setStatus('');
+      $('btn-clear').style.display = 'none';
+      $('search-input').focus();
+    });
 
     // Config panel
     $('config-toggle').addEventListener('click', () => {
