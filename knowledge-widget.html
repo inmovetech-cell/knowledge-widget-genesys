@@ -686,23 +686,38 @@
         if (open && !contentLoaded && doc.id) {
           contentArea.innerHTML = '<span class="spinner"></span> Cargando contenido…';
           try {
+            // includePublishedVariations=true obliga a Genesys a devolver el body completo
             const fullDoc = await apiFetch(
-              `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}`
+              `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}?includePublishedVariations=true`
             );
-            // Log para diagnóstico — abre DevTools > Consola para ver la estructura real
-            console.debug('[KB Widget] fullDoc structure:', JSON.stringify({
-              keys: Object.keys(fullDoc),
-              hasVariations: !!fullDoc.variations,
-              hasDocument: !!fullDoc.document,
-              v0keys: (fullDoc.variations?.[0] || fullDoc.document?.variations?.[0])
-                ? Object.keys(fullDoc.variations?.[0] || fullDoc.document.variations[0])
-                : 'none',
-            }));
             const fullBody = extractBody(fullDoc);
             contentLoaded = true;
-            contentArea.innerHTML = fullBody
-              ? highlight(fullBody, query)
-              : '<em>Sin contenido disponible en este artículo.</em>';
+            if (fullBody) {
+              contentArea.innerHTML = highlight(fullBody, query);
+            } else {
+              // Muestra diagnóstico inline para identificar la estructura real del JSON
+              const v0 = fullDoc.variations?.[0] || fullDoc.document?.variations?.[0];
+              const diag = {
+                rootKeys: Object.keys(fullDoc),
+                variationsLen: fullDoc.variations?.length ?? 'undef',
+                hasDocument: !!fullDoc.document,
+                v0Keys: v0 ? Object.keys(v0) : null,
+                v0bodyType: v0 ? typeof v0.body : null,
+                v0bodyKeys: (v0?.body && typeof v0.body === 'object') ? Object.keys(v0.body) : null,
+                blocksCount: v0?.body?.blocks?.length ?? 'undef',
+                firstBlock: v0?.body?.blocks?.[0] ? Object.keys(v0.body.blocks[0]) : null,
+              };
+              contentArea.innerHTML = `
+                <em>Sin contenido disponible en este artículo.</em>
+                <details style="margin-top:8px">
+                  <summary style="cursor:pointer;font-size:11px;color:var(--text-sub)">
+                    🔍 Diagnóstico de estructura (para el desarrollador)
+                  </summary>
+                  <pre style="font-size:10px;overflow:auto;white-space:pre-wrap;max-height:200px;margin-top:4px;background:#f4f6f8;padding:6px;border-radius:4px">${
+                    JSON.stringify(diag, null, 2)
+                  }</pre>
+                </details>`;
+            }
           } catch (e) {
             contentArea.innerHTML = `<em style="white-space:normal">Error al cargar: ${e.message}</em>`;
           }
