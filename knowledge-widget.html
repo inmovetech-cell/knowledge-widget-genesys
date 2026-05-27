@@ -572,6 +572,22 @@
     throw firstError;
   }
 
+  /* ── Extrae texto recursivamente de cualquier objeto ──────── */
+  function extractTextRecursive(obj, depth) {
+    if (depth === undefined) depth = 0;
+    if (depth > 6) return '';
+    if (typeof obj === 'string') return obj.trim();
+    if (!obj || typeof obj !== 'object') return '';
+    if (Array.isArray(obj)) {
+      return obj.map(function(i) { return extractTextRecursive(i, depth + 1); }).filter(Boolean).join(' ');
+    }
+    // Buscar primero campos que suelen contener texto
+    for (var k of ['text', 'value', 'content', 'body', 'html']) {
+      if (typeof obj[k] === 'string' && obj[k].trim()) return obj[k].trim();
+    }
+    return Object.values(obj).map(function(v) { return extractTextRecursive(v, depth + 1); }).filter(Boolean).join(' ');
+  }
+
   /* ── Extract article body text ────────────────────────── */
   function extractBody(doc) {
     // Genesys puede devolver variations en el nivel raíz o bajo doc.document
@@ -605,6 +621,10 @@
       }).filter(Boolean).join('\n');
 
       if (fromBlocks.trim()) return fromBlocks;
+
+      // Fallback recursivo: extrae cualquier campo 'text'/'value' de los bloques
+      const fromRecursive = blocks.map(b => extractTextRecursive(b)).filter(Boolean).join('\n');
+      if (fromRecursive.trim()) return fromRecursive;
     }
 
     // Fallback: campos planos
@@ -704,14 +724,18 @@
             } else {
               // Diagnóstico con lo que devuelve /variations
               const v0 = varList[0];
+              const para = v0?.body?.blocks?.[0]?.paragraph;
               const diag = {
                 variationsCount: varList.length,
                 v0Keys: v0 ? Object.keys(v0) : null,
-                v0bodyType: v0 ? typeof v0.body : null,
                 v0bodyKeys: (v0?.body && typeof v0.body === 'object') ? Object.keys(v0.body) : null,
                 blocksCount: v0?.body?.blocks?.length ?? 'undef',
-                firstBlockKeys: v0?.body?.blocks?.[0] ? Object.keys(v0.body.blocks[0]) : null,
                 firstBlockType: v0?.body?.blocks?.[0]?.type ?? null,
+                firstParagraphKeys: para ? Object.keys(para) : null,
+                textsLen: Array.isArray(para?.texts) ? para.texts.length : 'not-array',
+                firstTextKeys: para?.texts?.[0] ? Object.keys(para.texts[0]) : null,
+                firstTextValue: para?.texts?.[0]?.text ?? '(empty)',
+                recursiveExtract: extractTextRecursive(v0?.body?.blocks?.[0]),
               };
               contentArea.innerHTML = `
                 <em>Sin contenido disponible en este artículo.</em>
