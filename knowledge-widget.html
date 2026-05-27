@@ -640,7 +640,13 @@
     articles.forEach((article, idx) => {
       const doc = article.document || article;
       const title = doc.title || doc.name || 'Sin título';
-      const body = extractBody(doc);
+
+      // La búsqueda v1 devuelve article.snippet; la v2 puede traer highlights
+      const snippetText = article.snippet
+        || (article.highlights || []).map(h => h.value || h.text || h.snippet || '').filter(Boolean).join('\n')
+        || '';
+      const body = snippetText || extractBody(doc);
+
       const excerpt = body.length > 200 ? body.substring(0, 200) + '…' : body;
       const category = doc.categories?.map(c => c.name).join(' › ') || '';
       const externalUrl = doc.externalUrl || '';
@@ -686,32 +692,32 @@
         if (open && !contentLoaded && doc.id) {
           contentArea.innerHTML = '<span class="spinner"></span> Cargando contenido…';
           try {
-            // includePublishedVariations=true obliga a Genesys a devolver el body completo
-            const fullDoc = await apiFetch(
-              `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}?includePublishedVariations=true`
+            // El contenido del documento está en /variations, no en /documents/{id}
+            const varData = await apiFetch(
+              `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/${doc.id}/variations`
             );
-            const fullBody = extractBody(fullDoc);
+            const varList = varData.entities || (Array.isArray(varData) ? varData : []);
+            const fullBody = extractBody({ variations: varList });
             contentLoaded = true;
             if (fullBody) {
               contentArea.innerHTML = highlight(fullBody, query);
             } else {
-              // Muestra diagnóstico inline para identificar la estructura real del JSON
-              const v0 = fullDoc.variations?.[0] || fullDoc.document?.variations?.[0];
+              // Diagnóstico con lo que devuelve /variations
+              const v0 = varList[0];
               const diag = {
-                rootKeys: Object.keys(fullDoc),
-                variationsLen: fullDoc.variations?.length ?? 'undef',
-                hasDocument: !!fullDoc.document,
+                variationsCount: varList.length,
                 v0Keys: v0 ? Object.keys(v0) : null,
                 v0bodyType: v0 ? typeof v0.body : null,
                 v0bodyKeys: (v0?.body && typeof v0.body === 'object') ? Object.keys(v0.body) : null,
                 blocksCount: v0?.body?.blocks?.length ?? 'undef',
-                firstBlock: v0?.body?.blocks?.[0] ? Object.keys(v0.body.blocks[0]) : null,
+                firstBlockKeys: v0?.body?.blocks?.[0] ? Object.keys(v0.body.blocks[0]) : null,
+                firstBlockType: v0?.body?.blocks?.[0]?.type ?? null,
               };
               contentArea.innerHTML = `
                 <em>Sin contenido disponible en este artículo.</em>
                 <details style="margin-top:8px">
                   <summary style="cursor:pointer;font-size:11px;color:var(--text-sub)">
-                    🔍 Diagnóstico de estructura (para el desarrollador)
+                    🔍 Diagnóstico /variations
                   </summary>
                   <pre style="font-size:10px;overflow:auto;white-space:pre-wrap;max-height:200px;margin-top:4px;background:#f4f6f8;padding:6px;border-radius:4px">${
                     JSON.stringify(diag, null, 2)
