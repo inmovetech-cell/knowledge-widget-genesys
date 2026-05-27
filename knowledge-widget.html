@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Base de Conocimiento</title>
+
+  <!-- Genesys Cloud Client Apps SDK -->
+  <script src="https://sdk-cdn.mypurecloud.com/client-apps/2.4.0/purecloud-client-app-sdk.min.js"></script>
+
+  <style>
+    /* ─── Reset & Variables ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary:   #FF4F1F;   /* Genesys orange */
+      --primary-dk:#c93d15;
+      --surface:   #ffffff;
+      --bg:        #f4f6f8;
+      --border:    #dde1e6;
+      --text:      #1d2125;
+      --text-sub:  #5e6a78;
+      --radius:    8px;
+      --shadow:    0 1px 4px rgba(0,0,0,.12);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.5;
+      min-height: 100vh;
+    }
+
+    /* ─── Header ───────────────────────────────────────── */
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    header svg { flex-shrink: 0; }
+    header h1 { font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+
+    /* ─── Auth banner ───────────────────────────────────── */
+    #auth-banner {
+      background: #fff8e1;
+      border-bottom: 1px solid #ffe082;
+      padding: 8px 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+    }
+    #auth-banner.hidden { display: none; }
+    #btn-login {
+      margin-left: auto;
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 4px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    #btn-login:hover { background: var(--primary-dk); }
+
+    /* ─── Main layout ───────────────────────────────────── */
+    main {
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* ─── Search bar ────────────────────────────────────── */
+    .search-row {
+      display: flex;
+      gap: 6px;
+    }
+    .search-row input {
+      flex: 1;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 7px 10px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+      background: var(--surface);
+    }
+    .search-row input:focus { border-color: var(--primary); }
+    .search-row button {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius);
+      padding: 7px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      white-space: nowrap;
+      transition: background .15s;
+    }
+    .search-row button:hover { background: var(--primary-dk); }
+    .search-row button:disabled { opacity: .5; cursor: default; }
+
+    /* KB selector */
+    #kb-select {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+      font-size: 12px;
+      background: var(--surface);
+      outline: none;
+      cursor: pointer;
+    }
+    #kb-select:focus { border-color: var(--primary); }
+
+    /* ─── Status / spinner ──────────────────────────────── */
+    #status {
+      font-size: 12px;
+      color: var(--text-sub);
+      text-align: center;
+      padding: 6px 0;
+      display: none;
+    }
+    #status.visible { display: block; }
+
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--primary);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Results list ──────────────────────────────────── */
+    #results {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .result-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      transition: box-shadow .15s;
+    }
+    .result-card:hover { box-shadow: 0 3px 10px rgba(0,0,0,.15); }
+
+    .card-header {
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .card-header .icon {
+      margin-top: 2px;
+      flex-shrink: 0;
+      color: var(--primary);
+    }
+    .card-header .info { flex: 1; }
+    .card-title {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      margin-bottom: 2px;
+    }
+    .card-excerpt {
+      font-size: 11px;
+      color: var(--text-sub);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .card-meta {
+      font-size: 10px;
+      color: var(--text-sub);
+      margin-top: 3px;
+    }
+    .card-chevron {
+      margin-top: 2px;
+      flex-shrink: 0;
+      color: var(--text-sub);
+      transition: transform .2s;
+    }
+    .result-card.open .card-chevron { transform: rotate(180deg); }
+
+    .card-body {
+      display: none;
+      border-top: 1px solid var(--border);
+      padding: 10px 12px;
+      font-size: 12px;
+      line-height: 1.6;
+      color: var(--text);
+      max-height: 260px;
+      overflow-y: auto;
+    }
+    .result-card.open .card-body { display: block; }
+    .card-body p { margin-bottom: 6px; }
+    .card-body a {
+      color: var(--primary);
+      font-size: 11px;
+      text-decoration: none;
+    }
+    .card-body a:hover { text-decoration: underline; }
+
+    /* Highlight matching text */
+    mark {
+      background: #fff3cd;
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+
+    /* No results */
+    .no-results {
+      text-align: center;
+      color: var(--text-sub);
+      padding: 24px 0;
+      font-size: 12px;
+    }
+    .no-results svg { display: block; margin: 0 auto 8px; opacity: .4; }
+
+    /* ─── Config panel (bottom) ─────────────────────────── */
+    #config-toggle {
+      font-size: 11px;
+      color: var(--text-sub);
+      text-align: right;
+      cursor: pointer;
+      text-decoration: underline;
+      padding: 4px 0;
+    }
+    #config-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+    }
+    #config-panel.visible { display: flex; }
+    #config-panel label { font-size: 11px; color: var(--text-sub); }
+    #config-panel input {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: 12px;
+      width: 100%;
+      outline: none;
+    }
+    #config-panel input:focus { border-color: var(--primary); }
+    #btn-save-config {
+      background: var(--primary);
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      align-self: flex-end;
+    }
+    #btn-save-config:hover { background: var(--primary-dk); }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════
+     CONFIGURATION — edit these values before deploy
+     ═══════════════════════════════════════════════ -->
+<script>
+  const CONFIG = {
+    /* OAuth Implicit Grant client — create one in Admin > Integrations > OAuth
+       with grant type "Token Implicit Grant (Browser)"
+       and add this page URL as Authorized Redirect URI              */
+    clientId: 'd7444662-60d3-4adc-b49e-5fd0b6a9492b',
+
+    /* Genesys Cloud region, e.g.: us-east-1 | mypurecloud.com | ca-central-1
+       See: https://developer.genesys.cloud/platform/api/ for full list */
+    region: 'us-east-1',                 // ← change to your org region
+
+    /* Default Knowledge Base ID (leave empty to let the user pick from a list) */
+    defaultKnowledgeBaseId: '1d0a2723-a919-44c8-b24e-0e832130ba02',
+
+    /* Max articles per search */
+    pageSize: 20,
+  };
+</script>
+
+<!-- ─── Header ──────────────────────────────────────────── -->
+<header>
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none"
+       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/>
+    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>
+  </svg>
+  <h1>Base de Conocimiento</h1>
+</header>
+
+<!-- ─── Auth banner ─────────────────────────────────────── -->
+<div id="auth-banner">
+  <span>⚠️ Debes iniciar sesión para buscar artículos</span>
+  <button id="btn-login">Iniciar sesión</button>
+</div>
+
+<!-- ─── Main ────────────────────────────────────────────── -->
+<main>
+  <!-- KB selector -->
+  <select id="kb-select" style="display:none">
+    <option value="">— Cargando bases de conocimiento… —</option>
+  </select>
+
+  <!-- Search -->
+  <div class="search-row">
+    <input id="search-input" type="search" placeholder="Buscar artículos… (ej: contraseña, facturación)"
+           autocomplete="off" disabled />
+    <button id="btn-search" disabled>Buscar</button>
+  </div>
+
+  <!-- Status -->
+  <div id="status"></div>
+
+  <!-- Results -->
+  <div id="results"></div>
+
+  <!-- Config panel toggle -->
+  <div id="config-toggle">⚙ Configuración avanzada</div>
+  <div id="config-panel">
+    <label>Client ID (OAuth Implicit Grant)</label>
+    <input id="cfg-client-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+    <label>Región</label>
+    <input id="cfg-region" type="text" placeholder="us-east-1" />
+    <label>Knowledge Base ID (opcional)</label>
+    <input id="cfg-kb-id" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+    <button id="btn-save-config">Guardar y recargar</button>
+  </div>
+</main>
+
+<!-- ═══════════════════════════════════════════════════════
+     APPLICATION LOGIC
+     ═══════════════════════════════════════════════════ -->
+<script>
+(function () {
+  'use strict';
+
+  /* ── Helpers ─────────────────────────────────────────── */
+  const $ = id => document.getElementById(id);
+  let accessToken = null;
+  let apiBase = '';
+  let selectedKbId = '';
+
+  /* ── Persist/load overrides from localStorage ─────────── */
+  function loadLocalConfig() {
+    const stored = localStorage.getItem('gc_kb_config');
+    if (stored) {
+      try {
+        const c = JSON.parse(stored);
+        if (c.clientId) CONFIG.clientId = c.clientId;
+        if (c.region) CONFIG.region = c.region;
+        if (c.defaultKnowledgeBaseId) CONFIG.defaultKnowledgeBaseId = c.defaultKnowledgeBaseId;
+      } catch (_) {}
+    }
+  }
+
+  /* ── API base URL from region ─────────────────────────── */
+  function buildApiBase(region) {
+    // Region can be short form (us-east-1) or full domain (mypurecloud.com)
+    if (region.includes('.')) return `https://api.${region}`;
+    const regionMap = {
+      'us-east-1':    'mypurecloud.com',
+      'eu-west-1':    'mypurecloud.ie',
+      'ap-southeast-2': 'mypurecloud.com.au',
+      'ap-northeast-1': 'mypurecloud.jp',
+      'eu-central-1': 'mypurecloud.de',
+      'ca-central-1': 'cac1.pure.cloud',
+      'ap-northeast-2': 'apne2.pure.cloud',
+      'eu-west-2':    'euw2.pure.cloud',
+      'ap-south-1':   'aps1.pure.cloud',
+      'sa-east-1':    'sae1.pure.cloud',
+      'us-west-2':    'usw2.pure.cloud',
+    };
+    const host = regionMap[region] || `${region}.pure.cloud`;
+    return `https://api.${host}`;
+  }
+
+  /* ── OAuth Implicit Grant ─────────────────────────────── */
+  function extractTokenFromHash() {
+    const hash = window.location.hash.substring(1);
+    const params = new URLSearchParams(hash);
+    const token = params.get('access_token');
+    if (token) {
+      // Clean hash from URL without reload
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+      return token;
+    }
+    return null;
+  }
+
+  function redirectToLogin() {
+    const redirectUri = encodeURIComponent(window.location.href.split('#')[0]);
+    const authUrl = `${apiBase.replace('api.', 'login.')}/oauth/authorize`
+      + `?response_type=token`
+      + `&client_id=${encodeURIComponent(CONFIG.clientId)}`
+      + `&redirect_uri=${redirectUri}`;
+    window.location.href = authUrl;
+  }
+
+  /* ── API call wrapper ────────────────────────────────── */
+  async function apiFetch(path, options = {}) {
+    const res = await fetch(`${apiBase}${path}`, {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+        ...(options.headers || {}),
+      },
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  /* ── Load knowledge bases ────────────────────────────── */
+  async function loadKnowledgeBases() {
+    const data = await apiFetch('/api/v2/knowledge/knowledgebases?pageSize=50&publishedOnly=true');
+    return data.entities || [];
+  }
+
+  /* ── Search ──────────────────────────────────────────── */
+  async function searchKnowledge(query) {
+    // Use the v2 document search endpoint
+    const body = {
+      query: query,
+      pageSize: CONFIG.pageSize,
+    };
+    try {
+      const data = await apiFetch(
+        `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/search`,
+        { method: 'POST', body: JSON.stringify(body) }
+      );
+      return data.results || [];
+    } catch (_) {
+      // Fallback to legacy search endpoint
+      const data = await apiFetch(
+        `/api/v2/knowledge/knowledgebases/${selectedKbId}/search`,
+        { method: 'POST', body: JSON.stringify({ query, pageSize: CONFIG.pageSize }) }
+      );
+      return data.results || [];
+    }
+  }
+
+  /* ── Highlight query terms ───────────────────────────── */
+  function highlight(text, query) {
+    if (!text || !query) return text || '';
+    const terms = query.trim().split(/\s+/).filter(Boolean);
+    const pattern = new RegExp(`(${terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi');
+    return text.replace(pattern, '<mark>$1</mark>');
+  }
+
+  /* ── Render results ──────────────────────────────────── */
+  function renderResults(articles, query) {
+    const container = $('results');
+    container.innerHTML = '';
+
+    if (!articles.length) {
+      container.innerHTML = `
+        <div class="no-results">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          No se encontraron artículos para <strong>"${query}"</strong>.<br/>
+          Intenta con otros términos.
+        </div>`;
+      return;
+    }
+
+    articles.forEach((article, idx) => {
+      const doc = article.document || article;
+      const title = doc.title || doc.name || 'Sin título';
+      const body = doc.variations?.[0]?.body?.blocks
+        ?.map(b => b.paragraph?.texts?.map(t => t.text).join('') || '')
+        .filter(Boolean).join(' ')
+        || doc.text || doc.body || '';
+      const excerpt = body.length > 200 ? body.substring(0, 200) + '…' : body;
+      const category = doc.categories?.map(c => c.name).join(' › ') || '';
+      const externalUrl = doc.externalUrl || '';
+      const score = article.confidence != null
+        ? `Relevancia: ${Math.round(article.confidence * 100)}%`
+        : '';
+
+      const card = document.createElement('div');
+      card.className = 'result-card';
+      card.innerHTML = `
+        <div class="card-header" role="button" tabindex="0" aria-expanded="false">
+          <svg class="icon" width="16" height="16" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+            <polyline points="10 9 9 9 8 9"/>
+          </svg>
+          <div class="info">
+            <div class="card-title">${highlight(title, query)}</div>
+            <div class="card-excerpt">${highlight(excerpt, query)}</div>
+            <div class="card-meta">${[category, score].filter(Boolean).join(' · ')}</div>
+          </div>
+          <svg class="card-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+        </div>
+        <div class="card-body">
+          ${highlight(body, query) || '<em>Sin contenido disponible.</em>'}
+          ${externalUrl ? `<br/><a href="${externalUrl}" target="_blank" rel="noopener">🔗 Ver artículo completo</a>` : ''}
+        </div>`;
+
+      const header = card.querySelector('.card-header');
+      const toggle = () => {
+        const open = card.classList.toggle('open');
+        header.setAttribute('aria-expanded', open);
+      };
+      header.addEventListener('click', toggle);
+      header.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') toggle(); });
+      container.appendChild(card);
+    });
+  }
+
+  /* ── UI helpers ──────────────────────────────────────── */
+  function setStatus(msg, spin = false) {
+    const el = $('status');
+    if (msg) {
+      el.classList.add('visible');
+      el.innerHTML = spin ? `<span class="spinner"></span>${msg}` : msg;
+    } else {
+      el.classList.remove('visible');
+      el.textContent = '';
+    }
+  }
+
+  function enableSearch() {
+    $('search-input').disabled = false;
+    $('btn-search').disabled = false;
+  }
+
+  /* ── Populate KB selector ────────────────────────────── */
+  async function populateKbSelector() {
+    const sel = $('kb-select');
+    setStatus('Cargando bases de conocimiento…', true);
+    try {
+      const kbs = await loadKnowledgeBases();
+      if (!kbs.length) {
+        setStatus('No se encontraron bases de conocimiento publicadas.');
+        return;
+      }
+      sel.innerHTML = kbs.map(kb => `<option value="${kb.id}">${kb.name}</option>`).join('');
+      sel.style.display = 'block';
+      selectedKbId = sel.value;
+      sel.addEventListener('change', () => { selectedKbId = sel.value; });
+      setStatus('');
+      enableSearch();
+    } catch (e) {
+      setStatus(`Error cargando bases de conocimiento: ${e.message}`);
+    }
+  }
+
+  /* ── Main search handler ─────────────────────────────── */
+  async function doSearch() {
+    const query = $('search-input').value.trim();
+    if (!query) return;
+    if (!selectedKbId) { setStatus('Selecciona una base de conocimiento.'); return; }
+
+    $('results').innerHTML = '';
+    setStatus(`Buscando "${query}"…`, true);
+    $('btn-search').disabled = true;
+
+    try {
+      const results = await searchKnowledge(query);
+      setStatus('');
+      renderResults(results, query);
+    } catch (e) {
+      setStatus(`Error en la búsqueda: ${e.message}`);
+    } finally {
+      $('btn-search').disabled = false;
+    }
+  }
+
+  /* ── Init ────────────────────────────────────────────── */
+  function init() {
+    loadLocalConfig();
+    apiBase = buildApiBase(CONFIG.region);
+
+    // Pre-fill config panel
+    $('cfg-client-id').value = CONFIG.clientId;
+    $('cfg-region').value = CONFIG.region;
+    $('cfg-kb-id').value = CONFIG.defaultKnowledgeBaseId;
+
+    // Check for token in URL hash (post OAuth redirect)
+    const tokenFromHash = extractTokenFromHash();
+    if (tokenFromHash) {
+      accessToken = tokenFromHash;
+      sessionStorage.setItem('gc_access_token', tokenFromHash);
+    } else {
+      accessToken = sessionStorage.getItem('gc_access_token');
+    }
+
+    if (accessToken) {
+      $('auth-banner').classList.add('hidden');
+      if (CONFIG.defaultKnowledgeBaseId) {
+        selectedKbId = CONFIG.defaultKnowledgeBaseId;
+        enableSearch();
+        setStatus('');
+      } else {
+        populateKbSelector();
+      }
+    }
+
+    // Auth button
+    $('btn-login').addEventListener('click', () => {
+      if (!CONFIG.clientId || CONFIG.clientId === 'TU_CLIENT_ID_AQUI') {
+        alert('Configura el Client ID en la sección de configuración avanzada antes de iniciar sesión.');
+        $('config-panel').classList.add('visible');
+        return;
+      }
+      redirectToLogin();
+    });
+
+    // Search
+    $('btn-search').addEventListener('click', doSearch);
+    $('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') doSearch(); });
+
+    // Config panel
+    $('config-toggle').addEventListener('click', () => {
+      $('config-panel').classList.toggle('visible');
+    });
+    $('btn-save-config').addEventListener('click', () => {
+      const cfg = {
+        clientId: $('cfg-client-id').value.trim(),
+        region: $('cfg-region').value.trim(),
+        defaultKnowledgeBaseId: $('cfg-kb-id').value.trim(),
+      };
+      if (!cfg.clientId) { alert('El Client ID es obligatorio.'); return; }
+      localStorage.setItem('gc_kb_config', JSON.stringify(cfg));
+      sessionStorage.removeItem('gc_access_token');
+      window.location.reload();
+    });
+
+    // Try init with Genesys Client App SDK if available
+    try {
+      if (typeof window.purecloud !== 'undefined' && window.purecloud.apps) {
+        const myClientApp = new window.purecloud.apps.ClientApp({ pcEnvironment: CONFIG.region });
+        myClientApp.lifecycle.addStopListener(() => {
+          sessionStorage.removeItem('gc_access_token');
+        });
+      }
+    } catch (_) {}
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
