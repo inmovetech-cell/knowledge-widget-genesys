@@ -296,7 +296,7 @@
     region: 'us-east-1',                 // ← change to your org region
 
     /* Default Knowledge Base ID (leave empty to let the user pick from a list) */
-    defaultKnowledgeBaseId: '1d0a2723-a919-44c8-b24e-0e832130ba02',
+    defaultKnowledgeBaseId: 'bd1748da-aef3-4d91-8010-f93bb9f7abad',
 
     /* Max articles per search */
     pageSize: 20,
@@ -405,37 +405,119 @@
     const params = new URLSearchParams(hash);
     const token = params.get('access_token');
     if (token) {
-      // Clean hash from URL without reload
       history.replaceState(null, '', window.location.pathname + window.location.search);
       return token;
     }
     return null;
   }
 
-  function redirectToLogin() {
-    const redirectUri = encodeURIComponent(window.location.href.split('#')[0]);
-    const authUrl = `${apiBase.replace('api.', 'login.')}/oauth/authorize`
+  // Redirect URI must be origin+pathname only (no query params) to match what's registered in OAuth
+  function getCleanRedirectUri() {
+    return window.location.origin + window.location.pathname;
+  }
+
+  function getLoginUrl() {
+    return `${apiBase.replace('api.', 'login.')}/oauth/authorize`
       + `?response_type=token`
       + `&client_id=${encodeURIComponent(CONFIG.clientId)}`
-      + `&redirect_uri=${redirectUri}`;
-    window.location.href = authUrl;
+      + `&redirect_uri=${encodeURIComponent(getCleanRedirectUri())}`;
+  }
+
+  function redirectToLogin() {
+    // Prefer popup — avoids full iframe navigation issues inside Interaction Widget
+    const popup = window.open(getLoginUrl(), 'gc_login',
+      'width=520,height=680,resizable=yes,scrollbars=yes,toolbar=no,menubar=no');
+
+    if (!popup || popup.closed) {
+      // Popup blocked — fallback: navigate the iframe itself
+      window.location.href = getLoginUrl();
+      return;
+    }
+
+    // Poll the popup until our page loads back with the token in the hash
+    const timer = setInterval(() => {
+      try {
+        if (popup.closed) { clearInterval(timer); return; }
+        const hash = popup.location.hash;
+        if (hash && hash.includes('access_token')) {
+          const params = new URLSearchParams(hash.substring(1));
+          const token = params.get('access_token');
+          if (token) {
+            popup.close();
+            clearInterval(timer);
+            accessToken = token;
+            sessionStorage.setItem('gc_access_token', token);
+            onAuthenticated();
+          }
+        }
+      } catch (_) {
+        // Cross-origin while popup is on login page — ignore and keep polling
+      }
+    }, 600);
+  }
+
+  /* ── Post-auth setup ─────────────────────────────────── */
+  function onAuthenticated() {
+    $('auth-banner').classList.add('hidden');
+    setStatus('Verificando conexión con la API…', true);
+
+    // Validate API connectivity + token before enabling search
+    apiFetch('/api/v2/users/me')
+      .then(user => {
+        const name = user.name || 'Agente';
+        setStatus(`✓ Conectado como ${name}. ¿En qué puedo ayudarte?`);
+        setTimeout(() => setStatus(''), 3000);
+        if (CONFIG.defaultKnowledgeBaseId) {
+          selectedKbId = CONFIG.defaultKnowledgeBaseId;
+          enableSearch();
+        } else {
+          populateKbSelector();
+        }
+      })
+      .catch(e => {
+        setStatus(
+          `⚠️ Error de conectividad: ${e.message}<br>` +
+          `<small>Revisa: <strong>Admin → OAuth → tu cliente → Authorized Origins</strong> ` +
+          `y agrega <code>https://inmovetech-cell.github.io</code></small>`
+        );
+      });
   }
 
   /* ── API call wrapper ────────────────────────────────── */
   async function apiFetch(path, options = {}) {
-    const res = await fetch(`${apiBase}${path}`, {
-      ...options,
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-        ...(options.headers || {}),
-      },
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || `HTTP ${res.status}`);
+    const url = `${apiBase}${path}`;
+    const isWrite = ['POST', 'PUT', 'PATCH'].includes((options.method || 'GET').toUpperCase());
+    try {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          ...(isWrite ? { 'Content-Type': 'application/json' } : {}),
+          ...(options.headers || {}),
+        },
+      });
+      if (res.status === 401) {
+        accessToken = null;
+        sessionStorage.removeItem('gc_access_token');
+        $('auth-banner').classList.remove('hidden');
+        throw new Error('Sesión expirada. Por favor inicia sesión nuevamente.');
+      }
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `HTTP ${res.status}`);
+      }
+      return res.json();
+    } catch (e) {
+      if (e instanceof TypeError) {
+        // TypeError = network error / CORS block
+        throw new Error(
+          `No se pudo conectar con la API (${url}). ` +
+          `Posible error de CORS: agrega <strong>https://inmovetech-cell.github.io</strong> ` +
+          `en Admin → OAuth → tu cliente → <em>Authorized Origins</em>.`
+        );
+      }
+      throw e;
     }
-    return res.json();
   }
 
   /* ── Load knowledge bases ────────────────────────────── */
@@ -446,25 +528,36 @@
 
   /* ── Search ──────────────────────────────────────────── */
   async function searchKnowledge(query) {
-    // Use the v2 document search endpoint
-    const body = {
-      query: query,
-      pageSize: CONFIG.pageSize,
-    };
+    const kbPath = `/api/v2/knowledge/knowledgebases/${selectedKbId}`;
+    const qs = `query=${encodeURIComponent(query)}&pageSize=${CONFIG.pageSize}`;
+    let firstError = null;
+
+    // Attempt 1: GET /documents?query=... (no Content-Type in preflight — simpler CORS)
     try {
-      const data = await apiFetch(
-        `/api/v2/knowledge/knowledgebases/${selectedKbId}/documents/search`,
-        { method: 'POST', body: JSON.stringify(body) }
-      );
-      return data.results || [];
-    } catch (_) {
-      // Fallback to legacy search endpoint
-      const data = await apiFetch(
-        `/api/v2/knowledge/knowledgebases/${selectedKbId}/search`,
-        { method: 'POST', body: JSON.stringify({ query, pageSize: CONFIG.pageSize }) }
-      );
-      return data.results || [];
-    }
+      const data = await apiFetch(`${kbPath}/documents?${qs}`);
+      const items = data.entities || data.results || [];
+      if (items.length > 0) return items;
+    } catch (e) { firstError = firstError || e; }
+
+    // Attempt 2: POST /search (Knowledge v1 API)
+    try {
+      const data = await apiFetch(`${kbPath}/search`, {
+        method: 'POST',
+        body: JSON.stringify({ query, pageSize: CONFIG.pageSize }),
+      });
+      return data.results || data.entities || [];
+    } catch (e) { firstError = firstError || e; }
+
+    // Attempt 3: POST /documents/search (Knowledge v2 API)
+    try {
+      const data = await apiFetch(`${kbPath}/documents/search`, {
+        method: 'POST',
+        body: JSON.stringify({ query, pageSize: CONFIG.pageSize }),
+      });
+      return data.results || data.entities || [];
+    } catch (e) { firstError = firstError || e; }
+
+    throw firstError;
   }
 
   /* ── Highlight query terms ───────────────────────────── */
@@ -608,12 +701,20 @@
     loadLocalConfig();
     apiBase = buildApiBase(CONFIG.region);
 
+    // Auto-detect region from pcEnvironment param (Genesys Cloud injects this into widget URLs)
+    const urlParams = new URLSearchParams(window.location.search);
+    const pcEnv = urlParams.get('pcEnvironment');
+    if (pcEnv) {
+      CONFIG.region = pcEnv;
+      apiBase = buildApiBase(pcEnv);
+    }
+
     // Pre-fill config panel
     $('cfg-client-id').value = CONFIG.clientId;
     $('cfg-region').value = CONFIG.region;
     $('cfg-kb-id').value = CONFIG.defaultKnowledgeBaseId;
 
-    // Check for token in URL hash (post OAuth redirect)
+    // Check for token in URL hash (post OAuth redirect — iframe fallback flow)
     const tokenFromHash = extractTokenFromHash();
     if (tokenFromHash) {
       accessToken = tokenFromHash;
@@ -623,14 +724,7 @@
     }
 
     if (accessToken) {
-      $('auth-banner').classList.add('hidden');
-      if (CONFIG.defaultKnowledgeBaseId) {
-        selectedKbId = CONFIG.defaultKnowledgeBaseId;
-        enableSearch();
-        setStatus('');
-      } else {
-        populateKbSelector();
-      }
+      onAuthenticated();
     }
 
     // Auth button
