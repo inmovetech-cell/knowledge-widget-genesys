@@ -572,20 +572,43 @@
     throw firstError;
   }
 
+  /* ── Valores tipo/enum de Genesys que no son contenido ─────── */
+  const GC_TYPE_VALS = new Set([
+    'Paragraph','Text','Hyperlink','UnorderedList','OrderedList',
+    'Image','Video','Table','TableHead','TableBody','TableRow','TableCell','ListItem',
+    'Left','Center','Right','Indentation','None',
+    'Bold','Italic','Underline','Strikethrough','Superscript','Subscript',
+  ]);
+  const GC_SKIP_KEYS = new Set([
+    'type','id','selfUri','dateCreated','dateModified','priority',
+    'name','marks','alignment','url','documentVersion','hyperlink',
+    'document','knowledgeBase','selfuri',
+  ]);
+
   /* ── Extrae texto recursivamente de cualquier objeto ──────── */
   function extractTextRecursive(obj, depth) {
     if (depth === undefined) depth = 0;
     if (depth > 6) return '';
-    if (typeof obj === 'string') return obj.trim();
+    if (typeof obj === 'string') {
+      const s = obj.trim();
+      return (s && !GC_TYPE_VALS.has(s)) ? s : '';
+    }
     if (!obj || typeof obj !== 'object') return '';
     if (Array.isArray(obj)) {
       return obj.map(function(i) { return extractTextRecursive(i, depth + 1); }).filter(Boolean).join(' ');
     }
-    // Buscar primero campos que suelen contener texto
-    for (var k of ['text', 'value', 'content', 'body', 'html']) {
-      if (typeof obj[k] === 'string' && obj[k].trim()) return obj[k].trim();
+    // Buscar primero campos conocidos de texto
+    for (var k of ['text', 'value', 'content', 'html']) {
+      if (typeof obj[k] === 'string') {
+        const s = obj[k].trim();
+        if (s && !GC_TYPE_VALS.has(s)) return s;
+      }
     }
-    return Object.values(obj).map(function(v) { return extractTextRecursive(v, depth + 1); }).filter(Boolean).join(' ');
+    // Recurrir solo en claves que pueden contener contenido
+    return Object.entries(obj)
+      .filter(function(e) { return !GC_SKIP_KEYS.has(e[0]); })
+      .map(function(e) { return extractTextRecursive(e[1], depth + 1); })
+      .filter(Boolean).join(' ');
   }
 
   /* ── Extract article body text ────────────────────────── */
@@ -604,8 +627,12 @@
 
       const fromBlocks = blocks.flatMap(b => {
         if (b.paragraph) {
-          const txt = b.paragraph.texts?.map(t => t.text || '').join('') || '';
-          return txt ? [txt] : [];
+          const texts = Array.isArray(b.paragraph.texts) ? b.paragraph.texts : [];
+          const txt = texts.map(t => {
+            const s = t.text || t.value || t.body || '';
+            return typeof s === 'string' ? s : '';
+          }).join('');
+          return txt.trim() ? [txt.trim()] : [];
         }
         // Listas: unordered / ordered / genérica
         const list = b.list || b.unorderedList || b.orderedList;
